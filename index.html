@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <style>
     :root{--green:#166534;--green2:#15803d;--bg:#f3f6f4;--line:#e2e8f0;--text:#17211b;--muted:#64748b}
     *{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--text)}
@@ -91,6 +92,7 @@
       <div class="camera-actions">
         <button id="startCameraBtn" type="button" onclick="startScanner()" disabled>Aktifkan Kamera</button>
         <button id="stopCameraBtn" type="button" class="secondary" onclick="stopScanner()" disabled>Matikan Kamera</button>
+       <button id="shutterBtn" type="button" class="secondary" onclick="manualScan()" disabled>📷 Scan Manual</button>
       </div>
       <div id="cameraMsg" class="notice">Buka sesi absensi, lalu tekan Aktifkan Kamera.</div>
       <div id="reader"></div>
@@ -456,7 +458,8 @@ function updateCameraControls() {
   const active = Boolean(ACTIVE_SESSION);
   const running = Boolean(scanner);
   $('startCameraBtn').disabled = !active || running || scannerStarting;
-  $('stopCameraBtn').disabled = !running && !scannerStarting;
+  $('stopCameraBtn').disabled = !running && !scannerStarting; 
+  $('shutterBtn').disabled = !active || !scanner || !scanner.isScanning || scannerStarting || scanBusy;
 }
 async function startSession(){
   updateSessionControls(true);
@@ -494,20 +497,11 @@ async function startScanner(){
   try{
     await currentScanner.start(
       { facingMode:'environment' },
-      { fps:10, qrbox:{ width:230, height:230 }, aspectRatio:1.0, disableFlip:false },
-      async decodedText => {
-        if(scanner !== currentScanner || scanBusy || !ACTIVE_SESSION) return;
-        scanBusy = true;
-        try{
-          const r=await call('apiScan',TOKEN,ACTIVE_SESSION,decodedText);
-          msg('scanResult',`BERHASIL: ${r.nama}\nNISN: ${r.nisn}\nKelas: ${r.kelas}\n${r.mode}: ${r.waktu}\nStatus: ${r.status||'TERCATAT'}\nPetugas: ${r.guru}`,'success');
-          await loadDashboard();
-        }catch(e){
-          msg('scanResult',e.message,'error');
-        }finally{
-          setTimeout(()=>{ scanBusy=false; },1200);
-        }
-      },
+      { fps:15, qrbox:{ width:230, height:230 }, aspectRatio:1.0, disableFlip:false },
+     async decodedText => {
+  await processQRScan(decodedText, currentScanner);
+},
+
       errorMessage => {
         // Callback ini dipanggil berulang saat belum ada QR terbaca.
         // Abaikan agar tidak memenuhi layar dengan pesan.
@@ -534,7 +528,141 @@ async function startScanner(){
     updateCameraControls();
   }
 }
-async function stopScanner(){
+
+
+async function manualScan() {
+  if (!scanner || !scanner.isScanning || scanBusy || !ACTIVE_SESSION) {
+    return;
+  }
+
+  const video = document.querySelector('#reader video');
+
+  if (!video || !video.videoWidth) {
+    msg('scanResult', 'Kamera belum siap.', 'error');
+    return;
+  }
+
+  if (typeof jsQR !== 'function') {
+    msg('scanResult', 'Pembaca QR manual belum tersedia.', 'error');
+    return;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const ctx = canvas.getContext('2d', {
+    willReadFrequently: true
+  });
+
+  ctx.drawImage(video, 0, 0);
+
+  const image = ctx.getImageData(
+    0, 0, canvas.width, canvas.height
+  );
+
+  const qr = jsQR(
+    image.data,
+    image.width,
+    image.height,
+    { inversionAttempts: 'attemptBoth' }
+  );
+
+  if (!qr) {
+    msg('scanResult', 'QR belum terbaca. Arahkan kamera lebih dekat.', 'error');
+    return;
+  }
+
+  await processQRScan(qr.data, scanner);
+}
+
+
+
+  
+async function processQRScan(qrText, currentScanner) {
+  if (
+    scanner !== currentScanner ||
+    !currentScanner ||
+    !currentScanner.isScanning ||
+    scanBusy ||
+    !ACTIVE_SESSION
+  ) {
+    return;
+  }
+
+  scanBusy = true;
+
+  const shutterBtn = document.getElementById('shutterBtn');
+  if (shutterBtn) shutterBtn.disabled = true;
+
+  try {
+    const result = await call(
+      'apiScan',
+      TOKEN,
+      ACTIVE_SESSION,
+      qrText
+    );
+
+    msg(
+      'scanResult',
+      `BERHASIL: ${result.nama}
+NISN: ${result.nisn}
+Kelas: ${result.kelas}
+Waktu: ${result.waktu}
+Status: ${result.status || 'TERCATAT'}`,
+      'success'
+    );
+
+    // Bunyi hanya setelah server berhasil mencatat absensi.
+    try {
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
+
+      if (AudioContextClass) {
+        const audioCtx = new AudioContextClass();
+        await audioCtx.resume();
+
+        const oscillator = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 880;
+        gain.gain.value = 0.15;
+
+        oscillator.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.15);
+        oscillator.onended = () => audioCtx.close();
+      }
+    } catch (audioError) {
+      console.warn('Bunyi konfirmasi tidak tersedia:', audioError);
+    }
+
+    loadDashboard().catch(err =>
+      console.warn('Dashboard gagal diperbarui:', err)
+    );
+
+  } catch (error) {
+    msg('scanResult', error.message || String(error), 'error');
+
+  } finally {
+    setTimeout(() => {
+      scanBusy = false;
+
+      if (shutterBtn) {
+        shutterBtn.disabled = !(
+          scanner &&
+          scanner.isScanning &&
+          ACTIVE_SESSION
+        );
+      }
+    }, 500);
+  }
+}
+
+  async function stopScanner() {
   const currentScanner = scanner;
   scanner = null;
   if(currentScanner){
