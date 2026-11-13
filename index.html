@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Uji Kamera - Absensi QR NUHAJA</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px 14px; background: #f3f6f4; color: #17211b; font-family: Arial, sans-serif; }
+    main { max-width: 520px; margin: 32px auto; padding: 24px; background: white; border-radius: 16px; box-shadow: 0 5px 22px #17211b12; }
+    h1 { margin: 0 0 8px; font-size: 23px; color: #166534; text-align: center; }
+    p { line-height: 1.5; }
+    .intro { color: #64748b; text-align: center; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0 12px; }
+    button { flex: 1; min-width: 135px; padding: 13px; border: 0; border-radius: 9px; font-weight: bold; background: #166534; color: white; cursor: pointer; }
+    button.secondary { background: #e2e8f0; color: #17211b; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    video { display: block; width: 100%; max-height: 420px; aspect-ratio: 3 / 4; object-fit: cover; background: #111827; border-radius: 12px; }
+    #status { white-space: pre-wrap; padding: 12px; border-radius: 9px; background: #f1f5f9; font-size: 14px; }
+    #status.error { color: #991b1b; background: #fee2e2; }
+    #status.ok { color: #166534; background: #dcfce7; }
+    .note { font-size: 13px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ABSENSI QR NUHAJA</h1>
+    <p class="intro">Pengujian akses kamera melalui GitHub Pages</p>
+    <div class="actions">
+      <button id="start" type="button">Aktifkan Kamera</button>
+      <button id="stop" type="button" class="secondary" disabled>Matikan Kamera</button>
+    </div>
+    <p id="status" role="status" aria-live="polite">Kamera belum diaktifkan.</p>
+    <video id="preview" autoplay playsinline muted></video>
+    <p class="note">Buka alamat GitHub Pages melalui HTTPS. Izinkan akses kamera jika browser menampilkan permintaan.</p>
+  </main>
+  <script>
+    const video = document.getElementById('preview');
+    const startButton = document.getElementById('start');
+    const stopButton = document.getElementById('stop');
+    const status = document.getElementById('status');
+    let stream = null;
+    let requestId = 0;
+
+    function setStatus(message, type = '') {
+      status.textContent = message;
+      status.className = type;
+    }
+
+    function stopCamera() {
+      requestId++;
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+      startButton.disabled = false;
+      stopButton.disabled = true;
+      setStatus('Kamera dimatikan.');
+    }
+
+    async function startCamera() {
+      const id = ++requestId;
+      startButton.disabled = true;
+      stopButton.disabled = false;
+      setStatus('Meminta izin kamera. Pilih Izinkan jika diminta.');
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('Halaman tidak berada pada konteks aman HTTPS.');
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Browser ini tidak menyediakan akses kamera (getUserMedia).');
+        }
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: 'environment' } }
+        });
+        if (id !== requestId) {
+          newStream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        stream = newStream;
+        video.srcObject = stream;
+        try { await video.play(); } catch (e) { console.warn('Video play:', e); }
+        setStatus('Kamera berhasil aktif. Gambar langsung akan muncul di bawah.', 'ok');
+      } catch (error) {
+        if (id !== requestId) return;
+        const name = error.name || '';
+        let help = '';
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          help = 'Izin kamera ditolak atau dibatasi browser. Periksa pengaturan izin situs.';
+        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          help = 'Tidak ditemukan kamera pada perangkat.';
+        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+          help = 'Kamera mungkin sedang digunakan aplikasi lain.';
+        } else if (name === 'OverconstrainedError') {
+          help = 'Pengaturan kamera yang diminta tidak tersedia.';
+        }
+        setStatus('Kamera gagal dibuka: ' + name + (error.message ? ' - ' + error.message : '') + (help ? '\n' + help : ''), 'error');
+        startButton.disabled = false;
+        stopButton.disabled = true;
+      }
+    }
+
+    startButton.addEventListener('click', startCamera);
+    stopButton.addEventListener('click', stopCamera);
+    window.addEventListener('pagehide', stopCamera);
+  </script>
+</body>
+</html>
