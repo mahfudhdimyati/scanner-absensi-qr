@@ -459,7 +459,7 @@ function updateCameraControls() {
   const running = Boolean(scanner);
   $('startCameraBtn').disabled = !active || running || scannerStarting;
   $('stopCameraBtn').disabled = !running && !scannerStarting; 
-  $('shutterBtn').disabled = !active || !scanner || !scanner.isScanning || scannerStarting || scanBusy;
+  $('shutterBtn').disabled = !active || !scanner || scannerStarting || scanBusy;
 }
 async function startSession(){
   updateSessionControls(true);
@@ -531,7 +531,7 @@ async function startScanner(){
 
 
 async function manualScan() {
-  if (!scanner || !scanner.isScanning || scanBusy || !ACTIVE_SESSION) {
+  if (!scanner || scanBusy || !ACTIVE_SESSION) {
     return;
   }
 
@@ -583,7 +583,6 @@ async function processQRScan(qrText, currentScanner) {
   if (
     scanner !== currentScanner ||
     !currentScanner ||
-    !currentScanner.isScanning ||
     scanBusy ||
     !ACTIVE_SESSION
   ) {
@@ -651,13 +650,15 @@ Status: ${result.status || 'TERCATAT'}`,
     setTimeout(() => {
       scanBusy = false;
 
-      if (shutterBtn) {
-        shutterBtn.disabled = !(
-          scanner &&
-          scanner.isScanning &&
-          ACTIVE_SESSION
-        );
-      }
+     
+if (shutterBtn) {
+  shutterBtn.disabled = !(
+    scanner &&
+    ACTIVE_SESSION &&
+    !scannerStarting
+  );
+}
+
     }, 500);
   }
 }
